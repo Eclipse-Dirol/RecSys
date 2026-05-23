@@ -3,3 +3,6 @@ __pycache__/
 *.obsidian
 catboost_info/
 *.vscode
+data/
+alpha-hackathon_obsidian
+test.*
