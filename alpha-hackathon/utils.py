@@ -2,8 +2,9 @@ import pandas as pd
 import numpy as np
 from config import config
 import math
-import torch
+from catboost import Pool
 from sklearn.model_selection import train_test_split
+from importlib import import_module
 
 class NDCG():
     def __init__(self):
@@ -48,17 +49,15 @@ class NDCG():
 
 class DataWork():
     def __init__(self):
-        pass
+        self.submit = config.panel.submit
+        self.train = config.panel.train
+        self.drop_feat = config.args.drop_feat
+        self.target = config.args.target
 
-    def __call__(self):
-        return self.run()
+    def __call__(self, name):
+        return self.run(name)
 
-    def __getattribute__(self, name):
-        if name == 'df_val':
-            return super().__getattribute__('df_val')
-        return super().__getattribute__(name)
-
-    def load_data(
+    def read_data(
         self,
         path: str = None,
         extension: str = None
@@ -68,15 +67,32 @@ class DataWork():
         if extension == 'csv':
             return pd.read_csv(path)
 
-    def prep(
+    def load_data(self):
+        data = {}
+        if config.panel.train:
+            train_data = self.read_data(
+                path = config.path.train[0],
+                extension = config.path.train[1],
+            )
+            data['train'] = train_data
+        if config.panel.submit:
+            test_data = self.read_data(
+                path = config.path.test[0],
+                extension = config.path.test[1],
+            )
+            data['test'] = test_data
+        feat_data = self.read_data(
+            path = config.path.features[0],
+            extension = config.path.features[1],
+        )
+        data['feat'] = feat_data
+        return data
+
+    def universal_prep(
         self,
         data_ed: pd.DataFrame = None,
         data_feat: pd.DataFrame = None,
-        submit: bool = False,
-        train: bool = True
-    ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, np.ndarray, np.ndarray] | pd.DataFrame:
-        drop_feat = config.args.drop_feat
-        target = config.args.target
+    ):
         data_ed_temp = data_ed.copy()
         data_feat_temp = data_feat.copy()
 
@@ -86,62 +102,103 @@ class DataWork():
         data_ed_temp.rate = pd.to_numeric(data_ed_temp.rate)
         
         all_data= pd.merge(data_ed_temp, data_feat_temp, on=['app_id', 'date_part'])
-        cat_cols = all_data.select_dtypes(include=['object'])
+
+        cat_cols = all_data.select_dtypes(include=['object', str]).columns.tolist()
         for col in cat_cols:
             all_data[col] = all_data[col].astype('category')
 
-        if submit is True and train is not True:
-            self.request_id = all_data.request_id
-            self.variant_no = all_data.variant_no
-            return all_data.drop(columns=drop_feat)
+        all_data['date_part'] = pd.to_datetime(all_data['date_part'])
+        all_data["day"] = all_data["date_part"].dt.day
+        all_data["weekday"] = all_data["date_part"].dt.weekday
+        all_data["month"] = all_data["date_part"].dt.month
+        all_data["week"] = all_data["date_part"].dt.isocalendar().week.astype(int)
+        all_data["is_month_start"] = all_data["date_part"].dt.is_month_start.astype(int)
+        all_data["is_month_end"] = all_data["date_part"].dt.is_month_end.astype(int)
 
-        tr_group_id, val_group_id = train_test_split(all_data.request_id.unique(),
+        return all_data
+
+    def prep_for_model(
+        self,
+        data: dict = None,
+        name: str = None,
+    ) -> tuple:
+        tr_group_id, val_group_id = train_test_split(data.request_id.unique(),
                                                     test_size=config.args.test_size,
                                                     random_state=config.args.random_state)
+        
+        df_train = data[data.request_id.isin(tr_group_id)].sort_values('request_id').copy()
+        df_val = data[data.request_id.isin(val_group_id)].sort_values('request_id').copy()
 
-        df_train = all_data[all_data.request_id.isin(tr_group_id)].sort_values('request_id').copy()
-        self.df_val = all_data[all_data.request_id.isin(val_group_id)].sort_values('request_id').copy()
+        X_tr = df_train.drop(columns=self.drop_feat + [self.target]).reset_index(drop=True)
+        X_val = df_val.drop(columns=self.drop_feat + [self.target]).reset_index(drop=True)
 
-        tr_group = df_train.groupby("request_id", sort=False).size().to_numpy()
-        val_group = self.df_val.groupby("request_id", sort=False).size().to_numpy()
+        y_tr = df_train[self.target].reset_index(drop=True)
+        y_val = df_val[self.target].reset_index(drop=True)
 
-        X_tr, X_val = df_train.drop(columns=drop_feat+[target]).reset_index(drop=True), self.df_val.drop(columns=drop_feat+[target]).reset_index(drop=True)
-        y_tr, y_val = df_train[target], self.df_val[target]
+        tr_group_id = df_train['request_id'].reset_index(drop=True)
+        val_group_id = df_val['request_id'].reset_index(drop=True)
 
-        return (X_tr, y_tr, X_val, y_val, tr_group, val_group)
+        match name:
+            case 'LGBM':
+                tr_group = df_train.groupby('request_id', sort=False).size().to_numpy()
+                val_group = df_val.groupby('request_id', sort=False).size().to_numpy()
 
-    def run(self) -> tuple[tuple, pd.DataFrame | None]:
-        submit = config.panel.submit
-        train = config.panel.train
-        data_feat = self.load_data(
-            path = config.path.features[0],
-            extension= config.path.features[1]
-        )
-        data_train = self.load_data(
-            path = config.path.train[0],
-            extension= config.path.train[1]
-        )
-        data_train = self.prep(
-            data_ed = data_train,
-            data_feat = data_feat,
-            submit = submit,
-            train=train
-        )
-        if submit:
-            data_test = self.load_data(
-                path = config.path.test[0],
-                extension= config.path.test[1]
+                return (X_tr, y_tr, X_val, y_val, tr_group, val_group, df_val)
+
+            case 'Catboost':
+                cat_features = X_tr.select_dtypes(
+                    include=['category', 'string', 'object']
+                ).columns.tolist()
+
+                for col in cat_features:
+                    X_tr[col] = X_tr[col].astype("object").where(X_tr[col].notna(), "__NaN__").astype(str)
+                    X_val[col] = X_val[col].astype("object").where(X_val[col].notna(), "__NaN__").astype(str)
+
+                train_pool = Pool(
+                    data=X_tr,
+                    label=y_tr,
+                    group_id=tr_group_id,
+                    cat_features=cat_features,
+                )
+
+                val_pool = Pool(
+                    data=X_val,
+                    label=y_val,
+                    group_id=val_group_id,
+                    cat_features=cat_features,
+                )
+                return (train_pool, val_pool, df_val)
+
+            case 'NN':
+                pass
+
+    def run(self, name_model: str = None) -> tuple:
+        data_ed = self.load_data()
+        all_data = {}
+        for name in data_ed.keys():
+            if name == 'feat':
+                continue
+            data = data_ed[name]
+            all_data[name] = self.universal_prep(data, data_ed['feat'])
+        self.request_id = all_data['test']['request_id']
+        self.variant_no = all_data['test']['variant_no']
+        all_data['test'] = all_data['test'].drop(columns=self.drop_feat).reset_index(drop=True)
+        if name_model == 'Catboost':
+            cat_features = all_data['test'].select_dtypes(
+                        include=['category', 'string', 'object']
+                    ).columns.tolist()
+            for col in cat_features:
+                all_data['test'][col] = all_data['test'][col].astype("object").where(all_data['test'][col].notna(), "__NaN__").astype(str)
+
+        if self.train:
+            data = self.prep_for_model(
+                data = all_data['train'],
+                name = name_model
             )
-            data_test = self.prep(
-                data_ed = data_test,
-                data_feat = data_feat,
-                submit = submit,
-                train=False
-            )
-            return (data_train, data_test)
-        return (data_train, None)
+            return (data, all_data['test'])
+        return (all_data['test'])
 
-    def submit(
+    def save_preds(
             self, 
             name: str = None,
             preds_score: np.ndarray = None,
@@ -152,3 +209,19 @@ class DataWork():
             'score': preds_score,
         })
         submit.to_csv(f'{config.path.submit}/{name}.csv', index=False, sep=';')
+
+class ModelFactory():
+    @staticmethod
+    def get_model(name: str):
+        if name not in config.get_model:
+            raise ValueError(f"Unknown model name: {name}")
+
+        model_info = config.get_model[name]
+
+        module_path = model_info["module"]
+        class_name = model_info["class"]
+
+        module = import_module(module_path)
+        model_cls = getattr(module, class_name)
+
+        return model_cls()

@@ -2,10 +2,13 @@ from config import config
 import pandas as pd
 import numpy as np
 from lightgbm import LGBMRanker, early_stopping
-from utils import NDCG, DataWork
+from catboost import CatBoostRanker
+from utils import NDCG
 import joblib
 import time
 import warnings
+from typing import Optional
+from catboost import Pool
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -28,7 +31,7 @@ class LGBM():
         tr_group: np.ndarray = None,
         val_group: np.ndarray = None,
         df_val: pd.DataFrame = None,
-    ):
+    ) -> dict:
         start_fit = time.monotonic()
         self.model.fit(
             X_tr, y_tr,
@@ -51,9 +54,7 @@ class LGBM():
         if self.save:
             self.save_model()
         end_ndcg = time.monotonic()
-        print(f'model fited by {end_fit-start_fit} second')
-        print(f'preds, save and calculate metrics completed by {end_ndcg-start_ndcg} second')
-        return ndcg_5
+        return {"ndcg": ndcg_5, "fit_time": end_fit - start_fit, "eval_time": end_ndcg - start_ndcg,}
 
     def predict(
         self,
@@ -73,17 +74,81 @@ class LGBM():
         self,
         data: tuple = None,
         data_test: pd.DataFrame | None = None,
-        df_val: pd.DataFrame | None = None,
     ) -> tuple:
-        ndcg = self.model_training(
+        result = self.model_training(
             X_tr=data[0],
             y_tr=data[1],
             X_val=data[2],
             y_val=data[3],
             tr_group=data[4],
             val_group=data[5],
-            df_val=df_val
+            df_val=data[6]
         )
         if self.submit:
             preds = self.predict(data_test)
-        return (ndcg, preds)
+        return (result, preds)
+
+class CatBoost():
+    def __init__(self):
+        self.train = config.panel.train
+        self.submit = config.panel.submit
+        param = dict(config.param.catboost)
+        self.model = CatBoostRanker(**param)
+        self.save = config.panel.save_model
+
+    def model_training(
+        self,
+        train_pool: Optional[Pool] = None,
+        val_pool: Optional[Pool] = None,
+        df_val: pd.DataFrame = None
+    ):
+        
+        start_fit = time.monotonic()
+        self.model.fit(
+            train_pool,
+            eval_set=val_pool,
+            use_best_model=True
+        )
+        end_fit = time.monotonic()
+        start_ndcg = time.monotonic()
+        pred = self.model.predict(val_pool)
+        df_val_eval = df_val.copy()
+        df_val_eval["score"] = pred
+        ndcg_5 = metrics.mean_ndcg_at_5(
+            df_val_eval,
+            request_col="request_id",
+            score_col="score",
+            target_col="is_deal"
+        )
+        if self.save:
+            self.save_model()
+        end_ndcg = time.monotonic()
+        return {"ndcg": ndcg_5, "fit_time": end_fit - start_fit, "eval_time": end_ndcg - start_ndcg,}
+
+    def predict(
+        self,
+        data: pd.DataFrame = None
+    ):
+        model = self.load_model()
+        return model.predict(data)
+
+    def save_model(self):
+        joblib.dump(self.model, f'{config.path.save}/catboost-ranker.pkl')
+        return self
+
+    def load_model(self) -> any:
+        return joblib.load(f'{config.path.load}/catboost-ranker.pkl')
+
+    def run(
+        self,
+        data: tuple = None,
+        data_test: pd.DataFrame | None = None,
+    ) -> tuple:
+        result = self.model_training(
+            train_pool = data[0],
+            val_pool = data[1],
+            df_val = data[2]
+        )
+        if self.submit:
+            preds = self.predict(data_test)
+        return (result, preds)
