@@ -5,7 +5,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 data_config = {
     'panel':{
-        'model': ['LGBM'], # only LGBM and Catboost
+        'model': ['LGBM'], # only LGBM and XGB
         'submit': True,
         'train': True,
         'save_model': True,
@@ -29,15 +29,16 @@ data_config = {
         'drop_feat': ['app_id', 'request_received', 'request_id', 'offer_id', 'date_part'],
         'test_size': 0.2,
         'random_state': 42,
+        'folds': 5,
     },
     'get_model': {
         "LGBM": {
             "module": "models.boosting",
             "class": "LGBM",
         },
-        "Catboost": {
-            "module": "models.boosting",
-            "class": "CatBoost",
+        "XGB": {
+            'module':  "models.boosting",
+            "class": "XGB",
         },
         "NN": {
             "module": "models.nn",
@@ -59,17 +60,21 @@ data_config = {
             'n_jobs':-1,
             'verbose': -1
         },
-        'catboost': {
-            'loss_function': 'YetiRank',
-            'eval_metric': 'NDCG:top=5',
-            'iterations': 1000,
-            'learning_rate': 0.03,
-            'depth': 6,
-            'l2_leaf_reg': 10,
-            'random_seed': 42,
-            'early_stopping_rounds': 50,
-            'verbose': 0,
-            'allow_writing_files': False
+        'xgb': {
+            'objective': "rank:ndcg",
+            'eval_metric': "ndcg@5",
+            'n_estimators': 1000,
+            'learning_rate': 0.05,
+            'max_depth': 6,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'min_child_weight': 10,
+            'reg_alpha': 0.0,
+            'reg_lambda': 1.0,
+            'tree_method': "hist",
+            'random_state': 42,
+            'n_jobs': -1,
+            'enable_categorical': True
         },
     }
 }

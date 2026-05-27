@@ -11,22 +11,25 @@ def main():
     score = []
     for model_name in config.panel.model:
         data_all = dw(model_name)
+        if config.panel.show_log:
+            print(f'model name in config: {config.panel.model} | model in main: {model_name}')
+            print(f'start import {model_name} model')
         ranker_model = ModelFactory.get_model(model_name)
         if train:
-            result, preds = ranker_model.run(
+            result = ranker_model.run(
                 data = data_all[0],
                 data_test = data_all[1]
             )
             if config.panel.show_log:
                 print('log:')
-                print(f'model fit_time: {result["fit_time"]}')
-                print(f'model eval_time: {result["eval_time"]}')
-            print(f'----------NDCG@5 by {model_name}: {result["ndcg"]}')
-            score.append(preds)
+                print(f'model fit_time: {result[0]["fit_time"]}')
+                print(f'model eval_time: {result[0]["eval_time"]}')
+            print(f'----------NDCG@5 by {model_name}: {result[0]["ndcg"]}')
+            score.append(result[1])
         else:
             preds = model_name.predict(data = data_all[1])
         if submit and len(config.panel.model) < 2:
-            dw.save_preds(name = model_name, preds_score = preds)
+            dw.save_preds(name = model_name, preds_score = score[0])
         end = time.monotonic()
         if config.panel.show_log:
             print(f'Script completed by {end-start} second')

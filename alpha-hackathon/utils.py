@@ -145,30 +145,6 @@ class DataWork():
 
                 return (X_tr, y_tr, X_val, y_val, tr_group, val_group, df_val)
 
-            case 'Catboost':
-                cat_features = X_tr.select_dtypes(
-                    include=['category', 'string', 'object']
-                ).columns.tolist()
-
-                for col in cat_features:
-                    X_tr[col] = X_tr[col].astype("object").where(X_tr[col].notna(), "__NaN__").astype(str)
-                    X_val[col] = X_val[col].astype("object").where(X_val[col].notna(), "__NaN__").astype(str)
-
-                train_pool = Pool(
-                    data=X_tr,
-                    label=y_tr,
-                    group_id=tr_group_id,
-                    cat_features=cat_features,
-                )
-
-                val_pool = Pool(
-                    data=X_val,
-                    label=y_val,
-                    group_id=val_group_id,
-                    cat_features=cat_features,
-                )
-                return (train_pool, val_pool, df_val)
-
             case 'NN':
                 pass
 
@@ -183,13 +159,6 @@ class DataWork():
         self.request_id = all_data['test']['request_id']
         self.variant_no = all_data['test']['variant_no']
         all_data['test'] = all_data['test'].drop(columns=self.drop_feat).reset_index(drop=True)
-        if name_model == 'Catboost':
-            cat_features = all_data['test'].select_dtypes(
-                        include=['category', 'string', 'object']
-                    ).columns.tolist()
-            for col in cat_features:
-                all_data['test'][col] = all_data['test'][col].astype("object").where(all_data['test'][col].notna(), "__NaN__").astype(str)
-
         if self.train:
             data = self.prep_for_model(
                 data = all_data['train'],
