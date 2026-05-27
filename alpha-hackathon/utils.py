@@ -100,9 +100,11 @@ class DataWork():
         data_ed_temp.eva = pd.to_numeric(data_ed_temp.eva)
         data_ed_temp.eva_perc = pd.to_numeric(data_ed_temp.eva_perc)
         data_ed_temp.rate = pd.to_numeric(data_ed_temp.rate)
-        
-        all_data= pd.merge(data_ed_temp, data_feat_temp, on=['app_id', 'date_part'])
 
+        # all_data= pd.merge(data_ed_temp, data_feat_temp, on=['app_id', 'date_part'])
+
+        all_data = self.fe(data=data_ed_temp)
+        
         cat_cols = all_data.select_dtypes(include=['object', str]).columns.tolist()
         for col in cat_cols:
             all_data[col] = all_data[col].astype('category')
@@ -110,7 +112,6 @@ class DataWork():
         all_data['date_part'] = pd.to_datetime(all_data['date_part'])
         all_data["day"] = all_data["date_part"].dt.day
         all_data["weekday"] = all_data["date_part"].dt.weekday
-        all_data["month"] = all_data["date_part"].dt.month
         all_data["week"] = all_data["date_part"].dt.isocalendar().week.astype(int)
         all_data["is_month_start"] = all_data["date_part"].dt.is_month_start.astype(int)
         all_data["is_month_end"] = all_data["date_part"].dt.is_month_end.astype(int)
@@ -148,6 +149,71 @@ class DataWork():
             case 'NN':
                 pass
 
+    def fe(
+        self,
+        data: pd.DataFrame = None
+    ):
+        eps = 0.0001
+        df_temp = data
+        df_temp['limit'] = np.log1p(df_temp['limit']/1000000)
+        df_temp['req_loan_amount'] = np.log1p(df_temp['req_loan_amount']/1000000)
+        g = df_temp.groupby('app_id')
+        new_cols = pd.DataFrame({
+            'limit_to_req': df_temp['limit'] / (df_temp['req_loan_amount'] + 1),
+            'term_to_req': df_temp['term'] / (df_temp['req_term'] + 1),
+
+            'limit_diff': df_temp['limit'] - df_temp['req_loan_amount'],
+            'term_diff': df_temp['term'] - df_temp['req_term'],
+
+            'abs_limit_diff': (df_temp['limit'] - df_temp['req_loan_amount']).abs(),
+
+            'abs_term_diff': (df_temp['term'] - df_temp['req_term']).abs(),
+        }, index=df_temp.index)
+        
+        new_cols['offers_cnt_per_app'] = (g['offer_id'].transform('count'))
+        new_cols['rate_rank_in_app'] = (g['rate'].rank(method='dense', ascending=True))
+        new_cols['limit_rank_in_app'] = (g['limit'].rank(method='dense', ascending=False))
+        new_cols['term_rank_in_app'] = (g['term'].rank(method='dense', ascending=False))
+        new_cols['eva_rank_in_app'] = (g['eva'].rank(method='dense', ascending=False) )
+        new_cols['ncl_rank_in_app'] = (g['ncl'].rank(method='dense', ascending=True))
+        new_cols['rate_diff_from_best'] = (df_temp['rate'] - g['rate'].transform('min'))
+        new_cols['limit_diff_from_best'] = (g['limit'].transform('max') - df_temp['limit'])
+        new_cols['eva_diff_from_best'] = (g['eva'].transform('max') - df_temp['eva'])
+        new_cols['ncl_diff_from_best'] = (df_temp['ncl'] - g['ncl'].transform('min'))
+        new_cols['limit_ratio_to_max'] = (df_temp['limit'] /(g['limit'].transform('max') + eps) )
+        new_cols['rate_ratio_to_min'] = (df_temp['rate'] /(g['rate'].transform('min') + eps))
+        new_cols['eva_ratio_to_max'] = (df_temp['eva'] /(g['eva'].transform('max') + eps))
+        rate_mean_in_app = g['rate'].transform('mean')
+        limit_mean_in_app = g['limit'].transform('mean')
+        term_mean_in_app = g['term'].transform('mean')
+        eva_mean_in_app = g['eva'].transform('mean')
+        ncl_mean_in_app = g['ncl'].transform('mean')
+
+        new_cols['delta_rate_vs_app_mean'] = (df_temp['rate'] - rate_mean_in_app)
+        new_cols['delta_limit_vs_app_mean'] = ( df_temp['limit'] - limit_mean_in_app)
+        new_cols['delta_term_vs_app_mean'] = ( df_temp['term'] - term_mean_in_app )
+        new_cols['delta_eva_vs_app_mean'] = ( df_temp['eva'] - eva_mean_in_app)
+        new_cols['delta_ncl_vs_app_mean'] = ( df_temp['ncl'] - ncl_mean_in_app)
+        new_cols['rate_zscore_in_app'] = ( (df_temp['rate'] - rate_mean_in_app) /(g['rate'].transform('std') + eps))
+        new_cols['limit_zscore_in_app'] = ((df_temp['limit'] - limit_mean_in_app) /(g['limit'].transform('std') + eps))
+        new_cols['eva_zscore_in_app'] = ((df_temp['eva'] - eva_mean_in_app) /(g['eva'].transform('std') + eps))
+        new_cols['delta_rate_to_best'] = (df_temp['rate'] - g['rate'].transform('min'))
+        new_cols['delta_limit_to_best'] = (g['limit'].transform('max') - df_temp['limit'])
+        new_cols['delta_eva_to_best'] = ( g['eva'].transform('max') - df_temp['eva'] )
+        new_cols['rate_pct_in_app'] = (g['rate'].rank(pct=True, ascending=True))
+        new_cols['limit_pct_in_app'] = ( g['limit'].rank(pct=True, ascending=False))
+        new_cols['eva_pct_in_app'] = (g['eva'].rank(pct=True, ascending=False))
+        new_cols['limit_per_rate'] = (df_temp['limit'] / (df_temp['rate'] + eps))
+        new_cols['eva_per_rate'] = (df_temp['eva'] / (df_temp['rate'] + eps) )
+        new_cols['eva_to_ncl'] = ( df_temp['eva'] / (df_temp['ncl'] + eps))
+        new_cols['limit_to_ncl'] = (df_temp['limit'] / (df_temp['ncl'] + eps))
+        new_cols['variant_rank_in_app'] = (g['variant_no'].rank(method='dense',ascending=True))
+        new_cols['is_first_variant'] = (new_cols['variant_rank_in_app'] == 1).astype(int)
+
+        df_temp = pd.concat([df_temp, new_cols], axis=1)
+
+        return df_temp
+
     def run(self, name_model: str = None) -> tuple:
         data_ed = self.load_data()
         all_data = {}
@@ -160,11 +226,11 @@ class DataWork():
         self.variant_no = all_data['test']['variant_no']
         all_data['test'] = all_data['test'].drop(columns=self.drop_feat).reset_index(drop=True)
         if self.train:
-            data = self.prep_for_model(
+            all_data['train'] = self.prep_for_model(
                 data = all_data['train'],
                 name = name_model
             )
-            return (data, all_data['test'])
+            return (all_data['train'], all_data['test'])
         return (all_data['test'])
 
     def save_preds(

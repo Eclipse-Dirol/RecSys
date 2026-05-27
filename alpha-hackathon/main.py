@@ -28,6 +28,7 @@ def main():
             score.append(result[1])
         else:
             preds = model_name.predict(data = data_all[1])
+            score.append(preds)
         if submit and len(config.panel.model) < 2:
             dw.save_preds(name = model_name, preds_score = score[0])
         end = time.monotonic()

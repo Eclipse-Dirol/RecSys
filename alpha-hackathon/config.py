@@ -26,7 +26,7 @@ data_config = {
         'k': 5,
         'group_id': 'request_id',
         'target': 'is_deal',
-        'drop_feat': ['app_id', 'request_received', 'request_id', 'offer_id', 'date_part'],
+        'drop_feat': ['app_id', 'request_received', 'request_id', 'offer_id', 'date_part'], # 'per_capita_income_rur_amt', 'lanumberofchildren', 'laorganizationtype', 'loanapplrealtytype','loanapplworktype', 'lalifeinsurance', 'loanapplsocialstatus', 'anotherincome_rur_amt', 'loanapplpositiontype', 'gp_date', 'ei_date', 'nb_date'
         'test_size': 0.2,
         'random_state': 42,
         'folds': 5,
@@ -49,16 +49,19 @@ data_config = {
         'lgbm': {
             'objective': 'lambdarank',
             'metric': 'ndcg',
-            'learning_rate': 0.05,
-            'num_leaves': 31,
-            'max_depth': 6,
-            'n_estimators': 1000,
-            'subsample': 0.8,
+            'learning_rate': 0.02817537887612086, # 0.05
+            'num_leaves': 115,
+            'max_depth': 7, # 6
+            'min_child_samples': 17,
+            'n_estimators': 2000, # 1000
+            'subsample': 0.6839805922098774,
             'bagging_freq': 1,
-            'colsample_bytree': 0.8,
+            'colsample_bytree': 0.6969647403892848,
             'random_state': 42,
             'n_jobs':-1,
-            'verbose': -1
+            'verbose': -1,
+            'reg_alpha': 7.060337372337844e-08, 
+            'reg_lambda': 0.0014650835886297878
         },
         'xgb': {
             'objective': "rank:ndcg",
